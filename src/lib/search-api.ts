@@ -1,8 +1,10 @@
 // =============================================================================
-// SERVIÇO DE BUSCA - CASA DOS DADOS API
+// SERVIÇO DE BUSCA - CNPJá (https://cnpja.com)
 // =============================================================================
-// API semi-pública que permite buscar empresas por CNAE
-// Limite: ~100 resultados por busca (5 páginas x 20)
+// Endpoint GET https://api.cnpja.com/office com filtros por CNAE e UF.
+// Autenticação: header `Authorization: <token>` (sem prefixo Bearer).
+// Paginação: token-based (campo `next` na resposta, reuse como `?token=...`).
+// Token obrigatório via env CNPJA_TOKEN. Sem token, a rota devolve erro claro.
 
 export interface SearchParams {
   cnae: string;
@@ -48,169 +50,217 @@ export interface SearchResponse {
   error?: string;
 }
 
+// Shape parcial do record retornado pelo GET /office
+interface CnpjaRecord {
+  taxId: string;
+  alias: string | null;
+  founded: string | null;
+  head: boolean;
+  statusDate: string | null;
+  status: { id: number; text: string };
+  company: {
+    name: string;
+    equity: number | null;
+    size?: { id: number; text: string };
+  };
+  address: {
+    street: string | null;
+    number: string | null;
+    district: string | null;
+    city: string | null;
+    state: string;
+    zip: string | null;
+  };
+  phones: Array<{ type: string; area: string; number: string }>;
+  emails: Array<{ address: string; domain: string; ownership: string }>;
+  mainActivity: { id: number; text: string };
+}
+
+interface CnpjaPage {
+  next?: string;
+  limit: number;
+  count: number;
+  records: CnpjaRecord[];
+}
+
+const CNPJA_BASE = 'https://api.cnpja.com';
+
+// Códigos de situação cadastral da Receita (CNPJá usa o mesmo enum)
+const STATUS_ID: Record<NonNullable<SearchParams['situacao']>, number> = {
+  ATIVA: 2,
+  SUSPENSA: 3,
+  INAPTA: 4,
+  BAIXADA: 8,
+};
+
+function buildQuery(params: SearchParams, limit: number): URLSearchParams {
+  const q = new URLSearchParams();
+  q.set('limit', String(limit));
+  q.set('mainActivity.id.in', params.cnae);
+  q.set('status.id.in', String(STATUS_ID[params.situacao || 'ATIVA']));
+
+  if (params.uf) q.set('address.state.in', params.uf);
+  if (params.apenasMatriz) q.set('head.eq', 'true');
+  if (params.comEmail) q.set('emails.ex', 'true');
+  if (params.comTelefone) q.set('phones.ex', 'true');
+
+  // Porte 1 = MEI. Excluir MEI → incluir apenas ME(1), EPP(3), Demais(5) — mas
+  // a API só suporta include (size.id.in), não exclude. Então mandamos 3,5.
+  // Ao excluir MEI perdemos MEIs reais, que é exatamente a intenção.
+  if (params.excluirMEI) q.set('company.size.id.in', '3,5');
+
+  if (params.capitalMin != null) q.set('company.equity.gte', String(params.capitalMin));
+  if (params.capitalMax != null) q.set('company.equity.lte', String(params.capitalMax));
+
+  return q;
+}
+
+function mapRecord(r: CnpjaRecord, fallbackCnae: string): EmpresaResult {
+  const phone = r.phones?.[0];
+  const email = r.emails?.[0];
+  const endereco = [r.address.street, r.address.number].filter(Boolean).join(', ');
+
+  return {
+    cnpj: r.taxId,
+    razao_social: r.company.name,
+    nome_fantasia: r.alias || null,
+    cnae_fiscal: String(r.mainActivity?.id || fallbackCnae),
+    cnae_descricao: r.mainActivity?.text || null,
+    uf: r.address.state,
+    municipio: r.address.city || '',
+    bairro: r.address.district,
+    logradouro: r.address.street,
+    numero: r.address.number,
+    cep: r.address.zip,
+    telefone: phone ? `(${phone.area}) ${phone.number}` : null,
+    email: email?.address || null,
+    porte: r.company.size?.text || null,
+    data_abertura: r.founded,
+    situacao: r.status.text,
+    capital_social: r.company.equity,
+  };
+}
+
+async function fetchPage(token: string, query: URLSearchParams): Promise<CnpjaPage> {
+  const res = await fetch(`${CNPJA_BASE}/office?${query.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: token,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`CNPJá ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  return res.json();
+}
+
 export async function searchEmpresas(params: SearchParams): Promise<SearchResponse> {
-  const {
-    cnae,
-    uf,
-    cidade,
-    situacao = 'ATIVA',
-    apenasMatriz = false,
-    apenasMEI = false,
-    excluirMEI = false,
-    comEmail = false,
-    comTelefone = false,
-    capitalMin,
-    capitalMax,
-    page = 1,
-  } = params;
-
-  try {
-    const body = {
-      query: {
-        termo: [],
-        atividade_principal: [cnae],
-        natureza_juridica: [],
-        uf: uf ? [uf] : [],
-        municipio: cidade ? [cidade.toUpperCase()] : [],
-        bairro: [],
-        situacao_cadastral: situacao,
-        cep: [],
-        ddd: [],
-      },
-      range_query: {
-        data_abertura: { lte: null, gte: null },
-        capital_social: {
-          gte: capitalMin || null,
-          lte: capitalMax || null,
-        },
-      },
-      extras: {
-        somente_mei: apenasMEI,
-        excluir_mei: excluirMEI,
-        com_email: comEmail,
-        incluir_atividade_secundaria: false,
-        com_contato_telefonico: comTelefone,
-        somente_matriz: apenasMatriz,
-        somente_filial: false,
-      },
-      page,
-    };
-
-    const response = await fetch('https://api.casadosdados.com.br/v2/public/cnpj/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Erro Casa dos Dados:', response.status, errorText);
-      return {
-        success: false,
-        data: [],
-        total: 0,
-        page,
-        hasMore: false,
-        error: `Erro na API: ${response.status}`,
-      };
-    }
-
-    const result = await response.json();
-    
-    // Mapear resultados para nosso formato
-    const empresas: EmpresaResult[] = (result.data?.cnpj || []).map((emp: Record<string, unknown>) => {
-      const cnpjLimpo = String(emp.cnpj || '').replace(/\D/g, '');
-      
-      // Montar telefone
-      let telefone = null;
-      if (emp.ddd_telefone_1 && emp.telefone_1) {
-        telefone = `(${emp.ddd_telefone_1}) ${emp.telefone_1}`;
-      } else if (emp.ddd_telefone_2 && emp.telefone_2) {
-        telefone = `(${emp.ddd_telefone_2}) ${emp.telefone_2}`;
-      }
-
-      return {
-        cnpj: cnpjLimpo,
-        razao_social: emp.razao_social as string || '',
-        nome_fantasia: emp.nome_fantasia as string || null,
-        cnae_fiscal: cnae,
-        cnae_descricao: emp.cnae_fiscal_descricao as string || null,
-        uf: emp.uf as string || '',
-        municipio: emp.municipio as string || '',
-        bairro: emp.bairro as string || null,
-        logradouro: emp.logradouro as string || null,
-        numero: emp.numero as string || null,
-        cep: emp.cep as string || null,
-        telefone,
-        email: emp.email as string || null,
-        porte: emp.porte as string || null,
-        data_abertura: emp.data_inicio_atividade as string || null,
-        situacao: emp.situacao_cadastral as string || situacao,
-        capital_social: emp.capital_social as number || null,
-      };
-    });
-
-    // A API retorna no máximo 20 por página, até página 5
-    const total = result.data?.count || empresas.length;
-    const hasMore = page < 5 && empresas.length === 20;
-
-    return {
-      success: true,
-      data: empresas,
-      total,
-      page,
-      hasMore,
-    };
-
-  } catch (error) {
-    console.error('Erro ao buscar empresas:', error);
+  const token = process.env.CNPJA_TOKEN;
+  if (!token) {
     return {
       success: false,
       data: [],
       total: 0,
-      page,
+      page: 1,
+      hasMore: false,
+      error: 'CNPJA_TOKEN não configurado. Defina a variável no Easypanel.',
+    };
+  }
+
+  try {
+    const query = buildQuery(params, 100);
+    const page = await fetchPage(token, query);
+
+    const data = page.records.map((r) => mapRecord(r, params.cnae));
+    return {
+      success: true,
+      data,
+      total: page.count,
+      page: 1,
+      hasMore: Boolean(page.next),
+    };
+  } catch (error) {
+    console.error('Erro CNPJá search:', error);
+    return {
+      success: false,
+      data: [],
+      total: 0,
+      page: 1,
       hasMore: false,
       error: error instanceof Error ? error.message : 'Erro desconhecido',
     };
   }
 }
 
-// Buscar múltiplas páginas de uma vez (para pegar mais resultados)
+// Paginar até totalMax resultados (cap de segurança: 1000)
 export async function searchEmpresasAll(
   params: SearchParams,
-  maxPages = 5
+  totalMax = 1000,
 ): Promise<SearchResponse> {
-  const allEmpresas: EmpresaResult[] = [];
-  let currentPage = 1;
-  let total = 0;
-
-  while (currentPage <= maxPages) {
-    const result = await searchEmpresas({ ...params, page: currentPage });
-    
-    if (!result.success) {
-      if (currentPage === 1) return result;
-      break;
-    }
-
-    allEmpresas.push(...result.data);
-    total = result.total;
-
-    if (!result.hasMore) break;
-    
-    currentPage++;
-    
-    // Pequeno delay para não sobrecarregar a API
-    await new Promise(r => setTimeout(r, 300));
+  const token = process.env.CNPJA_TOKEN;
+  if (!token) {
+    return {
+      success: false,
+      data: [],
+      total: 0,
+      page: 1,
+      hasMore: false,
+      error: 'CNPJA_TOKEN não configurado. Defina a variável no Easypanel.',
+    };
   }
 
-  return {
-    success: true,
-    data: allEmpresas,
-    total,
-    page: 1,
-    hasMore: false,
-  };
+  const all: EmpresaResult[] = [];
+  let nextToken: string | undefined;
+  let total = 0;
+
+  try {
+    // Primeira página com filtros
+    const firstQuery = buildQuery(params, 100);
+    let page = await fetchPage(token, firstQuery);
+    total = page.count;
+    all.push(...page.records.map((r) => mapRecord(r, params.cnae)));
+    nextToken = page.next;
+
+    // Páginas seguintes: só `token` (mutuamente exclusivo com filtros)
+    while (nextToken && all.length < totalMax) {
+      const pageQuery = new URLSearchParams({ token: nextToken });
+      page = await fetchPage(token, pageQuery);
+      all.push(...page.records.map((r) => mapRecord(r, params.cnae)));
+      nextToken = page.next;
+      // Pequeno delay para respeitar rate limit do plano gratuito
+      if (nextToken) await new Promise((r) => setTimeout(r, 500));
+    }
+
+    return {
+      success: true,
+      data: all.slice(0, totalMax),
+      total,
+      page: 1,
+      hasMore: Boolean(nextToken) && all.length >= totalMax,
+    };
+  } catch (error) {
+    console.error('Erro CNPJá searchAll:', error);
+    // Se já coletamos algo antes do erro, devolve parcial como sucesso
+    if (all.length > 0) {
+      return {
+        success: true,
+        data: all,
+        total: total || all.length,
+        page: 1,
+        hasMore: false,
+      };
+    }
+    return {
+      success: false,
+      data: [],
+      total: 0,
+      page: 1,
+      hasMore: false,
+      error: error instanceof Error ? error.message : 'Erro desconhecido',
+    };
+  }
 }
