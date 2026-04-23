@@ -1,0 +1,28 @@
+node_modules/
+.next/
+out/
+dist/
+
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Env
+.env
+.env.local
+.env*.local
+
+# Debug
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+.vercel

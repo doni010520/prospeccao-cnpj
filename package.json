@@ -1,0 +1,31 @@
+{
+  "name": "prospeccao-cnpj",
+  "version": "1.0.0",
+  "description": "Sistema completo de prospecção B2B por CNAE",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db:init": "npx tsx scripts/init-db.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.1.2",
+    "lucide-react": "^0.400.0",
+    "next": "14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
