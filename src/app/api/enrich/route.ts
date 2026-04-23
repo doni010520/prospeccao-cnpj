@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { enrichCNPJ, enrichBatch } from '@/lib/enrichment';
+import { enrichCNPJ, type EnrichedData } from '@/lib/enrichment';
 import { getDb } from '@/lib/db';
 
 // POST /api/enrich - Enriquecer CNPJ(s)
@@ -72,10 +72,10 @@ export async function POST(request: NextRequest) {
 }
 
 // Função auxiliar para salvar como lead
-function saveAsLead(data: Record<string, unknown>) {
+function saveAsLead(data: EnrichedData) {
   try {
     const db = getDb();
-    const socios = data.socios as Array<{ nome: string; qualificacao: string | null }> | undefined;
+    const socios = data.socios;
 
     db.prepare(`
       INSERT OR REPLACE INTO leads (
