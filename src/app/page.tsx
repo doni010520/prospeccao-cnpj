@@ -3,9 +3,10 @@
 import { useState, useCallback } from 'react';
 import {
   Search, Download, Building2, Filter, X,
-  RefreshCw, CheckCircle, Users, FileSpreadsheet, Sparkles, Loader2
+  RefreshCw, CheckCircle, Users, FileSpreadsheet, Sparkles, Loader2, Plus
 } from 'lucide-react';
 import { ESTADOS_BR, formatarCNPJ } from '@/lib/utils';
+import type { Lead } from '@/lib/db';
 
 // CNAE fixo: Escolas de Idiomas
 const CNAE_ESCOLAS_IDIOMAS = '8593700';
@@ -74,7 +75,7 @@ export default function Home() {
   const [success, setSuccess] = useState<string | null>(null);
 
   // Leads salvos
-  const [leads, setLeads] = useState<Empresa[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsTotal, setLeadsTotal] = useState(0);
 
   // ========== BUSCA ==========
@@ -614,23 +615,23 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {leads.map((lead: Record<string, unknown>) => (
-                      <tr key={lead.id as number} className="hover:bg-gray-50">
+                    {leads.map((lead) => (
+                      <tr key={lead.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3">
-                          <div className="text-sm font-medium text-gray-900">{lead.razao_social as string || '-'}</div>
-                          <div className="text-xs text-gray-400 font-mono">{formatarCNPJ(lead.cnpj as string)}</div>
+                          <div className="text-sm font-medium text-gray-900">{lead.razao_social || '-'}</div>
+                          <div className="text-xs text-gray-400 font-mono">{formatarCNPJ(lead.cnpj)}</div>
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
                           {lead.cidade || '-'}/{lead.uf || '-'}
                         </td>
                         <td className="px-4 py-3">
-                          {lead.telefone && <div className="text-sm">{lead.telefone as string}</div>}
-                          {lead.email && <div className="text-xs text-blue-600">{lead.email as string}</div>}
+                          {lead.telefone && <div className="text-sm">{lead.telefone}</div>}
+                          {lead.email && <div className="text-xs text-blue-600">{lead.email}</div>}
                         </td>
-                        <td className="px-4 py-3 text-sm">{lead.nome_socio_1 as string || '-'}</td>
+                        <td className="px-4 py-3 text-sm">{lead.nome_socio_1 || '-'}</td>
                         <td className="px-4 py-3">
                           <span className={`badge-${lead.status === 'novo' ? 'blue' : lead.status === 'qualificado' ? 'green' : 'gray'}`}>
-                            {lead.status as string}
+                            {lead.status}
                           </span>
                         </td>
                       </tr>
